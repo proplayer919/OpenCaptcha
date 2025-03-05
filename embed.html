@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenCaptcha</title>
+    <style>
+      /* Container for the entire widget */
+      .widget {
+        width: 320px;
+        margin: 40px auto;
+        padding: 15px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-family: Arial, sans-serif;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        background: #fff;
+      }
+
+      .opencaptcha-header {
+        display: flex;
+        align-items: center;
+        padding: 10px;
+        cursor: pointer;
+      }
+
+      .opencaptcha-checkbox {
+        position: relative;
+        width: 20px;
+        height: 20px;
+        border: 1px solid #ccc;
+        border-radius: 3px;
+        margin-right: 10px;
+        flex-shrink: 0;
+      }
+
+      .opencaptcha-checkbox.checked::after {
+        content: "";
+        position: absolute;
+        left: 5px;
+        top: 2px;
+        width: 5px;
+        height: 10px;
+        border: solid #4285f4;
+        border-width: 0 2px 2px 0;
+        transform: rotate(45deg);
+      }
+
+      .opencaptcha-label {
+        flex-grow: 1;
+        font-size: 14px;
+      }
+
+      .opencaptcha-brand {
+        margin-left: auto;
+        font-size: 12px;
+        color: #666;
+      }
+
+      .captcha-challenge {
+        display: none;
+        text-align: center;
+        margin-top: 15px;
+      }
+
+      .captcha-challenge img {
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        max-width: 100%;
+        margin-bottom: 10px;
+      }
+
+      .captcha-input-container {
+        display: flex;
+        gap: 5px;
+        align-items: center;
+      }
+
+      .captcha-challenge input[type="text"] {
+        flex-grow: 1;
+        padding: 8px;
+        font-size: 14px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+      }
+
+      .captcha-challenge button {
+        padding: 8px 12px;
+        font-size: 14px;
+        border: none;
+        border-radius: 4px;
+        background-color: #28a745;
+        color: #fff;
+        cursor: pointer;
+      }
+
+      .result-message {
+        margin-top: 15px;
+        font-weight: bold;
+        text-align: center;
+        min-height: 1.5em;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="widget" id="opencaptchaWidget">
+      <!-- Header with checkbox, label, and brand -->
+      <div class="opencaptcha-header" id="opencaptchaHeader" tabindex="0" role="checkbox" aria-checked="false">
+        <div class="opencaptcha-checkbox" id="opencaptchaCheckbox" aria-hidden="true"></div>
+        <span class="opencaptcha-label">I'm not a robot</span>
+        <span class="opencaptcha-brand">OpenCaptcha</span>
+      </div>
+
+      <!-- Text-based CAPTCHA challenge (hidden by default) -->
+      <div class="captcha-challenge" id="captchaChallenge" aria-live="polite">
+        <div id="captchaImgContainer"></div>
+        <input type="text" id="captchaInput" placeholder="Enter text here" aria-label="CAPTCHA input" />
+        <button id="verifyCaptchaBtn">Verify</button>
+      </div>
+
+      <!-- Result message area -->
+      <div class="result-message" id="resultMsg" aria-live="assertive"></div>
+    </div>
+
+    <script>
+      function sendVerificationStatus(status) {
+        window.parent.postMessage({ verified: status }, "*");
+      }
+
+      let mouseData = [];
+      let clickData = [];
+      let keypressData = [];
+      let suspiciousCount = 0;
+
+      document.addEventListener("mousemove", (e) => {
+        const time = performance.now();
+        if (mouseData.length > 0) {
+          let last = mouseData[mouseData.length - 1];
+          let dx = e.clientX - last.x;
+          let dy = e.clientY - last.y;
+          let dt = time - last.t;
+
+          if (dt > 0) {
+            let speed = Math.sqrt(dx * dx + dy * dy) / dt;
+            if (speed > 50) {
+              suspiciousCount++;
+              console.log("Suspicious speed", speed);
+            }
+          }
+        }
+        mouseData.push({ x: e.clientX, y: e.clientY, t: time });
+
+        if (mouseData.length > 1) {
+          let last = mouseData[mouseData.length - 1];
+          let secondLast = mouseData[mouseData.length - 2];
+          let dx = last.x - secondLast.x;
+          let dy = last.y - secondLast.y;
+          let angle = Math.atan2(dy, dx);
+          if (angle < 0.00001 && angle > -0.00001 && Math.hypot(dx, dy) > 5) {
+            suspiciousCount++;
+            console.log("Suspicious movement");
+          }
+        }
+      });
+
+      document.addEventListener("click", (e) => {
+        let target = e.target;
+        if (target instanceof HTMLDivElement || target instanceof HTMLBodyElement || target instanceof HTMLHtmlElement || target instanceof HTMLHeadElement) {
+          console.log("Click on non-actionable element");
+          return;
+        }
+        let mousePosition = mouseData[mouseData.length - 1];
+        let targetRect = target.getBoundingClientRect();
+        if (mousePosition.x < targetRect.left ||
+          mousePosition.x > targetRect.right ||
+          mousePosition.y < targetRect.top ||
+          mousePosition.y > targetRect.bottom) {
+          suspiciousCount++;
+          console.log("Suspicious click outside element");
+        } else if (!(target instanceof HTMLButtonElement) &&
+          !(target instanceof HTMLAnchorElement) &&
+          !target.closest("form")) {
+          suspiciousCount--;
+          console.log("Dismiss suspicious click");
+        }
+      });
+
+      document.addEventListener("click", (e) => {
+        clickData.push({ x: e.clientX, y: e.clientY, t: performance.now() });
+        if (clickData.length > 1) {
+          let last = clickData[clickData.length - 2];
+          if (clickData[clickData.length - 1].t - last.t < 50) {
+            suspiciousCount++;
+            console.log("Suspicious click");
+          }
+        }
+      });
+
+      document.addEventListener("keydown", (e) => {
+        keypressData.push({ key: e.key, t: performance.now() });
+        if (keypressData.length > 2) {
+          let last = keypressData[keypressData.length - 2];
+          if (keypressData[keypressData.length - 1].t - last.t < 20) {
+            suspiciousCount++;
+            console.log("Suspicious typing");
+          }
+        }
+      });
+
+      function detectHeadless() {
+        if (navigator.webdriver) {
+          suspiciousCount++;
+          console.log("Suspicious webdriver");
+        }
+      }
+
+      document.getElementById("opencaptchaHeader").addEventListener("click", () => {
+        detectHeadless();
+        if (suspiciousCount > 3) {
+          document.getElementById("captchaChallenge").style.display = "block";
+          loadCaptcha();
+        } else {
+          document.getElementById("opencaptchaCheckbox").classList.add("checked");
+          document.getElementById("resultMsg").innerText = "Verified!";
+          sendVerificationStatus(true);
+        }
+      });
+
+      let remainingAttempts = 3;
+      const API_BASE = "http://localhost:5000";
+      let currentCaptchaId = null;
+
+      // Load a new CAPTCHA from backend
+      async function loadCaptcha() {
+        try {
+          const res = await fetch(`${API_BASE}/generate_captcha`);
+          const data = await res.json();
+          currentCaptchaId = data.captcha_id;
+          document.getElementById("captchaImgContainer").innerHTML =
+            `<img src="data:image/png;base64,${data.captcha_image}" alt="CAPTCHA image" />`;
+          document.getElementById("captchaInput").value = "";
+        } catch (error) {
+          console.error("Failed to load CAPTCHA:", error);
+          document.getElementById("resultMsg").innerText = "Error loading CAPTCHA.";
+        }
+      }
+
+      // Verify the user's CAPTCHA input
+      async function verifyCaptcha() {
+        const userInput = document.getElementById("captchaInput").value.trim();
+        try {
+          const res = await fetch(`${API_BASE}/verify_captcha`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ captcha_id: currentCaptchaId, captcha_input: userInput })
+          });
+          const result = await res.json();
+          if (result.success) {
+            document.getElementById("opencaptchaWidget").innerText = "Verified!";
+            sendVerificationStatus(true);
+          } else {
+            remainingAttempts--;
+            if (remainingAttempts <= 0) {
+              document.getElementById("opencaptchaWidget").innerText = "CAPTCHA failed.";
+              sendVerificationStatus(false);
+            } else {
+              document.getElementById("resultMsg").innerText = `CAPTCHA failed. ${remainingAttempts} attempt(s) remaining.`;
+              loadCaptcha();
+            }
+          }
+        } catch (err) {
+          console.error("Verification error:", err);
+          document.getElementById("resultMsg").innerText = "Error verifying CAPTCHA.";
+        }
+      }
+
+      const checkbox = document.getElementById("opencaptchaCheckbox");
+      const header = document.getElementById("opencaptchaHeader");
+      const captchaChallenge = document.getElementById("captchaChallenge");
+      const resultMsg = document.getElementById("resultMsg");
+
+      // Enable keyboard accessibility for the header
+      header.addEventListener("keydown", (e) => {
+        if (e.key === " " || e.key === "Enter") {
+          e.preventDefault();
+          header.click();
+        }
+      });
+
+      // Attach verification to the button
+      document.getElementById("verifyCaptchaBtn").addEventListener("click", verifyCaptcha);
+    </script>
+  </body>
+
+</html>
