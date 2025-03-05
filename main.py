@@ -167,4 +167,4 @@ def widget():
 
 if __name__ == '__main__':
     # Run the app; set debug=False in production
-    app.run(port=os.environ['PORT'])
+    app.run(host='0.0.0.0', port=os.environ['PORT'])
